@@ -28,6 +28,7 @@ import {
   X
 } from 'lucide-react';
 import { sendTrackPing, onEviction, getDeviceInfo } from '../services/tracker';
+import QvDevLogo from './QvDevLogo';
 
 // Master Admin and VIP Passwords
 const REQUIRED_PASSWORD = "Q8_VIP_6419_T2Z";
@@ -546,13 +547,18 @@ export default function SecurityGate({ children }: SecurityGateProps) {
         <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 border-b-2 border-r-2 border-purple-400 rounded-br-lg" />
         <div className="absolute -bottom-1 -left-1 w-3.5 h-3.5 border-b-2 border-l-2 border-cyan-400 rounded-bl-lg" />
 
+        {/* Polished QV DEV Bot Brand Identity Logo & Typography */}
+        <div className="mb-4">
+          <QvDevLogo variant="hero" showSubtitle={true} />
+        </div>
+
         {/* Live Security Protocol Badge */}
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-black mb-5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
           </span>
-          <span className="tracking-wide">نظام الحماية المشفرة • QV DEV VIP TERMINAL</span>
+          <span className="tracking-wide">نظام الحماية المشفرة • VIP TERMINAL</span>
         </div>
 
         {/* Central Futuristic Hologram Lock / Fingerprint Icon */}
@@ -604,23 +610,6 @@ export default function SecurityGate({ children }: SecurityGateProps) {
             ? 'جاري فك التشفير وتوجيهك إلى محرك الإشارات الفورية وصفقات الفجوات...' 
             : 'أدخل رمز المرور السري الخاص بالبوت للوصول لصفقات وخوارزميات اليوم.'}
         </p>
-
-        {/* 1-Phone & 1-Wi-Fi Hardware/IP Security Indicator */}
-        <div className="w-full mb-4 p-3 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-purple-950/30 to-blue-950/40 border border-cyan-500/30 shadow-inner flex flex-col gap-1.5 text-right">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-black text-cyan-300 flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>نظام القفل الحصري: هاتف واحد + شبكة واي فاي واحدة</span>
-            </span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              نشط ومحمي
-            </span>
-          </div>
-          <p className="text-[10px] text-slate-400 leading-normal">
-            يتم ربط كلمة المرور تلقائياً ببصمة الهاتف وشبكة الاتصال عند أول دخول لمنع أي مشاركة خارجية.
-          </p>
-        </div>
 
         {/* Lockout Notice if applicable */}
         {lockoutTimer > 0 && (

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { QvDevEmblem } from './components/QvDevLogo';
 import { 
   ShieldAlert, 
   ShieldCheck, 
@@ -456,16 +457,17 @@ function AdminDashboardView({ onLogout }: { onLogout: () => void }) {
 
       {/* Top Header */}
       <header className="p-4 sm:p-5 rounded-2xl bg-white/[0.02] border border-white/10 backdrop-blur-xl flex flex-wrap items-center justify-between gap-4 shadow-xl">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-black font-black shadow-[0_0_20px_rgba(0,240,255,0.4)]">
-            <ShieldAlert className="w-6 h-6 text-black" />
-          </div>
+        <div className="flex items-center gap-3.5">
+          <QvDevEmblem size="md" />
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-black text-white">مركز إدارة ومراقبة QV DEV</h1>
-              <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-mono font-bold">PRO ROOT</span>
+              <h1 className="text-xl font-black text-white font-mono flex items-center gap-2">
+                <span>مركز إدارة ومراقبة</span>
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00F0FF] to-blue-400">QV DEV</span>
+              </h1>
+              <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-mono font-bold tracking-wider">PRO ROOT</span>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">مراقبة عنوان IP، تصفح الزوار، الجلسات، الأكواد، والأمان الفوري</p>
+            <p className="text-xs text-slate-400 mt-0.5 font-sans">مراقبة عنوان IP، تصفح الزوار، الجلسات، الأكواد، والأمان الفوري</p>
           </div>
         </div>
 

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Send, Clock, Sparkles, MessageCircle, FolderLock } from 'lucide-react';
+import { Send, Clock, Sparkles, MessageCircle } from 'lucide-react';
 import SignalGenerator from './components/SignalGenerator';
 import SecurityGate from './components/SecurityGate';
-import MaterialsModal from './components/MaterialsModal';
+import QvDevLogo from './components/QvDevLogo';
 
 const SUPPORT_URL = "https://t.me/QV_CODE";
 const CHANNEL_URL = "https://t.me/QV_CODE";
@@ -16,7 +16,6 @@ const TelegramIcon = ({ className = "w-3 h-3" }: { className?: string }) => (
 
 export default function MainUserApp() {
   const [cairoTime, setCairoTime] = useState('');
-  const [showMaterialsModal, setShowMaterialsModal] = useState(false);
 
   useEffect(() => {
     const updateTime = () => {
@@ -81,21 +80,21 @@ export default function MainUserApp() {
               <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
                 
                 {/* Right Side (RTL): QV DEV Logo, Member Badge & Time Clock */}
-                <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="relative group shrink-0">
-                      <div className="absolute inset-0 bg-gradient-to-tr from-[#00F0FF] to-[#0066FF] rounded-xl blur-sm opacity-30 group-hover:opacity-50 transition-opacity" />
-                      <div className="w-10 h-10 rounded-xl bg-[#070b19] border border-[#00F0FF]/30 flex items-center justify-center relative overflow-hidden shadow-xl">
-                        <span className="font-black text-transparent bg-clip-text bg-gradient-to-r from-[#00F0FF] to-[#0066FF] text-xs tracking-tighter">QV DEV</span>
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col">
+                <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto gap-3.5 sm:gap-4 flex-wrap">
+                  {/* High-Tech QV DEV Logo & Typography */}
+                  <QvDevLogo variant="header" showSubtitle={true} />
+
+                  {/* Elegant divider */}
+                  <div className="h-8 w-[1px] bg-white/10 hidden md:block" />
+
+                  {/* Member Badge */}
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10">
+                    <div className="flex flex-col text-right">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-black text-white leading-tight">{userName}</span>
+                        <span className="text-xs font-black text-white leading-tight">{userName}</span>
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#00FF95] animate-pulse" />
                       </div>
-                      <span className="text-[10px] text-[#00F0FF] font-black uppercase tracking-wider mt-0.5">عضو QV DEV VIP</span>
+                      <span className="text-[9px] text-[#00F0FF] font-black uppercase tracking-wider mt-0.5">عضو VIP</span>
                     </div>
                   </div>
 
@@ -106,20 +105,8 @@ export default function MainUserApp() {
                   </div>
                 </div>
 
-                {/* Left Side (RTL): Quick Links (Vault, Channel & Support) */}
-                <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
-                  {/* Materials & Strategies Vault Button */}
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => setShowMaterialsModal(true)}
-                    className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/35 text-xs font-black transition-all cursor-pointer group shadow-md"
-                    title="مساحة تخزين المواد والاستراتيجيات"
-                  >
-                    <FolderLock className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
-                    <span>خزنة المواد</span>
-                  </motion.button>
-
+                {/* Left Side (RTL): Quick Links (Channel & Support) */}
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                   {/* Official Channel Link */}
                   <motion.a 
                     whileHover={{ scale: 1.03 }}
@@ -159,13 +146,6 @@ export default function MainUserApp() {
             <div className="w-full">
               <SignalGenerator lang="ar" />
             </div>
-
-            {/* Materials Vault Modal */}
-            <MaterialsModal
-              isOpen={showMaterialsModal}
-              onClose={() => setShowMaterialsModal(false)}
-              isAdmin={false}
-            />
             
             {/* Clean minimal footer without duplicate link buttons */}
             <footer className="w-full mt-10 pb-6 text-center text-[10px] text-slate-500 font-bold tracking-wider flex flex-col items-center gap-3">

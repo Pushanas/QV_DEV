@@ -20,11 +20,18 @@ import {
   XCircle,
   Zap,
   Activity,
-  Check
+  Check,
+  ShieldX,
+  Sliders,
+  Settings,
+  ArrowLeft,
+  X
 } from 'lucide-react';
+import { sendTrackPing, onEviction, getDeviceInfo } from '../services/tracker';
 
-// New high-entropy quantum-grade VIP random password (Q8 Identity)
+// Master Admin and VIP Passwords
 const REQUIRED_PASSWORD = "Q8_VIP_6419_T2Z";
+const ADMIN_MASTER_PASSWORD = "Q8_ADMIN_9731_ROOT_X2";
 const AUTH_STORAGE_KEY = "q8_vip_auth_pass_v7_ip_locked";
 const LEGACY_STORAGE_KEYS = [
   'q8_vip_auth_pass_v6_quantum_v2',
@@ -41,7 +48,7 @@ const LEGACY_STORAGE_KEYS = [
   'ah_vip_today_signals_v2'
 ];
 
-const SUPPORT_URL = "https://t.me/Qv_Dev";
+const SUPPORT_URL = "https://t.me/QV_CODE";
 
 const TelegramIcon = ({ className = "w-3 h-3" }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -123,6 +130,118 @@ export default function SecurityGate({ children }: SecurityGateProps) {
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockoutTimer, setLockoutTimer] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Admin 5-click easter egg state
+  const [adminClicks, setAdminClicks] = useState(0);
+  const adminClickTimeoutRef = useRef<any>(null);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [adminError, setAdminError] = useState('');
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
+  const [bannedNotice, setBannedNotice] = useState<string | null>(null);
+
+  const handleFingerprintTap = () => {
+    if (adminClickTimeoutRef.current) {
+      clearTimeout(adminClickTimeoutRef.current);
+    }
+    const nextCount = adminClicks + 1;
+    if (nextCount >= 5) {
+      setAdminClicks(0);
+      setShowAdminModal(true);
+      setAdminError('');
+    } else {
+      setAdminClicks(nextCount);
+      adminClickTimeoutRef.current = setTimeout(() => {
+        setAdminClicks(0);
+      }, 2500);
+    }
+  };
+
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminPasswordInput.trim()) {
+      setAdminError('يرجى إدخال كلمة مرور الإدارة');
+      return;
+    }
+    setAdminLoading(true);
+    setAdminError('');
+
+    const inputClean = adminPasswordInput.trim();
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: inputClean })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.token) {
+          localStorage.setItem('q8_admin_token', data.token);
+        }
+        localStorage.setItem('q8_admin_logged_in', 'true');
+        setShowAdminModal(false);
+        window.location.href = '/admin';
+        return;
+      } else {
+        if (inputClean === ADMIN_MASTER_PASSWORD) {
+          localStorage.setItem('q8_admin_logged_in', 'true');
+          setShowAdminModal(false);
+          window.location.href = '/admin';
+          return;
+        }
+        setAdminError('كلمة مرور الإدارة غير صحيحة');
+      }
+    } catch (e) {
+      if (inputClean === ADMIN_MASTER_PASSWORD) {
+        localStorage.setItem('q8_admin_logged_in', 'true');
+        setShowAdminModal(false);
+        window.location.href = '/admin';
+        return;
+      }
+      setAdminError('كلمة مرور الإدارة غير صحيحة');
+    }
+    setAdminLoading(false);
+  };
+
+  // Immediate eviction listener for banned IP or revoked code
+  useEffect(() => {
+    const unsub = onEviction((reason) => {
+      try {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        LEGACY_STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+        sessionStorage.clear();
+        if (typeof BroadcastChannel !== 'undefined') {
+          const bc = new BroadcastChannel('q8_vip_security_sync');
+          bc.postMessage('REVOKE_ALL');
+          bc.close();
+        }
+      } catch(e) {}
+      setIsUnlocked(false);
+      setUnlockedSuccess(false);
+      setBannedNotice(reason || '⛔ تم حظر عنوان IP أو جهازك أو إلغاء كود الدخول فوراً من قِبل الإدارة!');
+      setErrorMsg(reason || '⛔ تم حظر عنوان IP أو جهازك أو إلغاء كود الدخول فوراً من قِبل الإدارة!');
+    });
+    return () => unsub();
+  }, []);
+
+  // Continuous tracking and heartbeat check every 3.5 seconds
+  useEffect(() => {
+    const runPing = async () => {
+      const res = await sendTrackPing({
+        page: isUnlocked ? 'محرك إشارات VIP' : 'بوابة تسجيل الدخول'
+      });
+      if (res.isBanned || res.isRevoked) {
+        handleLockBot();
+        setBannedNotice(res.message || '⛔ تم حظر عنوان IP أو طردك من البوت بواسطة الإدارة فوراً!');
+      }
+    };
+
+    runPing();
+    const interval = setInterval(runPing, 3500);
+    return () => clearInterval(interval);
+  }, [isUnlocked]);
 
   // Multi-tier active session enforcement across all tabs and background returns
   useEffect(() => {
@@ -433,12 +552,25 @@ export default function SecurityGate({ children }: SecurityGateProps) {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
           </span>
-          <span className="tracking-wide">نظام الحماية المشفرة • Q8 VIP TERMINAL</span>
+          <span className="tracking-wide">نظام الحماية المشفرة • QV DEV VIP TERMINAL</span>
         </div>
 
         {/* Central Futuristic Hologram Lock / Fingerprint Icon */}
         <div className="relative mb-5">
-          <div className="relative group">
+          {adminClicks > 0 && (
+            <motion.div 
+              initial={{ opacity: 0, y: 5, scale: 0.8 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-0.5 rounded-full bg-cyan-950/90 border border-cyan-400 text-cyan-300 text-[10px] font-black shadow-[0_0_15px_rgba(0,240,255,0.5)] z-20"
+            >
+              🔐 وضع الإدارة: نقرة {adminClicks}/5
+            </motion.div>
+          )}
+          <div 
+            className="relative group cursor-pointer select-none active:scale-95 transition-transform"
+            onClick={handleFingerprintTap}
+            title="انقر 5 مرات للوصول للوحة الإدارة"
+          >
             <div className="absolute -inset-2 bg-gradient-to-r from-cyan-500 via-purple-600 to-cyan-400 rounded-3xl blur-xl opacity-65 group-hover:opacity-95 transition-opacity animate-pulse" />
             <div className="w-20 h-20 sm:w-22 sm:h-22 rounded-3xl bg-[#060817] border-2 border-cyan-500/40 flex items-center justify-center relative overflow-hidden shadow-[inset_0_0_25px_rgba(0,240,255,0.25)]">
               {unlockedSuccess ? (
@@ -451,7 +583,7 @@ export default function SecurityGate({ children }: SecurityGateProps) {
                 </motion.div>
               ) : (
                 <div className="relative flex items-center justify-center">
-                  <Fingerprint className="w-11 h-11 text-cyan-400 animate-pulse drop-shadow-[0_0_12px_rgba(0,240,255,0.7)]" />
+                  <Fingerprint className={`w-11 h-11 text-cyan-400 drop-shadow-[0_0_12px_rgba(0,240,255,0.7)] ${adminClicks > 0 ? 'scale-110 text-cyan-300' : 'animate-pulse'}`} />
                   <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-purple-600/90 border border-purple-300/40 flex items-center justify-center shadow-lg">
                     <Lock className="w-2.5 h-2.5 text-white" />
                   </div>
@@ -647,6 +779,154 @@ export default function SecurityGate({ children }: SecurityGateProps) {
         </div>
 
       </motion.div>
+
+      {/* ADMIN ROOT TERMINAL MODAL (Triggered by 5 Fingerprint Clicks) */}
+      <AnimatePresence>
+        {showAdminModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="w-full max-w-md bg-gradient-to-b from-[#0e122b] via-[#090c21] to-[#040614] border-2 border-cyan-500/50 rounded-3xl p-6 sm:p-7 relative shadow-[0_0_60px_rgba(0,240,255,0.3)] text-right"
+              dir="rtl"
+            >
+              {/* Close Button */}
+              <button 
+                onClick={() => setShowAdminModal(false)}
+                className="absolute top-4 left-4 p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0 shadow-[0_0_20px_rgba(0,240,255,0.2)]">
+                  <Settings className="w-6 h-6 animate-spin" style={{ animationDuration: '10s' }} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white flex items-center gap-2">
+                    <span>بوابة إدارة النظام المشفرة</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 font-mono">ROOT</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5 font-bold">تم فتح نمط الإدارة بنجاح (5 نقرات بصمة)</p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-cyan-300 text-xs font-bold mb-4 flex items-center gap-2">
+                <Radio className="w-4 h-4 text-cyan-400 animate-pulse shrink-0" />
+                <span>أدخل كلمة مرور المسؤول الفائقة للدخول الفوري للوحة المراقبة والتحكم.</span>
+              </div>
+
+              <form onSubmit={handleAdminLogin} className="flex flex-col gap-4">
+                <div className="relative">
+                  <input
+                    type={showAdminPassword ? "text" : "password"}
+                    value={adminPasswordInput}
+                    onChange={(e) => setAdminPasswordInput(e.target.value)}
+                    placeholder="كلمة مرور الإدارة الفائقة..."
+                    autoFocus
+                    className="w-full px-4 py-3.5 pr-11 pl-11 rounded-xl bg-white/5 border border-cyan-500/40 text-white placeholder-slate-500 text-sm font-mono focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all"
+                  />
+                  <Lock className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-cyan-400" />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminPassword(!showAdminPassword)}
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    {showAdminPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                {adminError && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -5 }} 
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-bold text-center"
+                  >
+                    {adminError}
+                  </motion.div>
+                )}
+
+                <div className="flex items-center gap-3 mt-1">
+                  <button
+                    type="submit"
+                    disabled={adminLoading}
+                    className="flex-1 py-3.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-black text-sm flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(0,240,255,0.4)] transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {adminLoading ? (
+                      <span className="flex items-center gap-2 text-white">
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>جاري التحقق...</span>
+                      </span>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>دخول فوري إلى لوحة الإدارة</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminModal(false)}
+                    className="py-3.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-sm transition-all"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BANNED / REVOKED EVICTION POPUP MODAL */}
+      <AnimatePresence>
+        {bannedNotice && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-2xl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="w-full max-w-md bg-gradient-to-b from-[#2a0e14] via-[#1a080c] to-[#0d0305] border-2 border-rose-500/60 rounded-3xl p-6 sm:p-7 relative shadow-[0_0_70px_rgba(244,63,94,0.4)] text-center"
+              dir="rtl"
+            >
+              <div className="w-16 h-16 rounded-full bg-rose-500/15 border-2 border-rose-500 flex items-center justify-center text-rose-400 mx-auto mb-4 animate-bounce">
+                <ShieldX className="w-8 h-8" />
+              </div>
+
+              <h3 className="text-xl font-black text-white mb-2">تم طرد الجهاز وحظر الوصول</h3>
+              <p className="text-sm text-rose-300 font-bold leading-relaxed mb-6">
+                {bannedNotice}
+              </p>
+
+              <div className="p-3.5 rounded-2xl bg-black/40 border border-rose-500/30 text-[11px] text-slate-300 text-right mb-6 space-y-1.5 font-mono">
+                <div className="text-rose-400 font-bold">🔒 تفاصيل الإجراء الأمني:</div>
+                <div>• تم إلغاء جلسة التداول فوراً وإغلاق جميع المنافذ.</div>
+                <div>• إذا كنت تعتقد أن هذا حدث بالخطأ، يرجى مراجعة إدارة البوت الرسمية.</div>
+              </div>
+
+              <div className="flex flex-col gap-2.5">
+                <a
+                  href={SUPPORT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg transition-all"
+                >
+                  <TelegramIcon className="w-4 h-4" />
+                  <span>التواصل مع الإدارة عبر تليجرام</span>
+                </a>
+
+                <button
+                  onClick={() => setBannedNotice(null)}
+                  className="w-full py-2.5 text-xs text-slate-400 hover:text-white font-bold transition-colors"
+                >
+                  إغلاق هذه الرسالة
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

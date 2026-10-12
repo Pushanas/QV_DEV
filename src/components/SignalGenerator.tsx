@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ASSET_PAIRS, DIRECTIONS, Signal } from '../types';
 import { copyToClipboard } from '../utils';
+import { sendTrackPing } from '../services/tracker';
 import { 
   TrendingUp, TrendingDown, Search, RefreshCw, Copy, Check, Zap, Timer,
   Star, Bookmark, Activity, Cpu, SlidersHorizontal, ArrowUpRight, ArrowDownRight, Sparkles, Clock, Send, MessageCircle, AlertCircle, ShieldAlert, Lock, Split
@@ -53,7 +54,7 @@ const parseTimeToMinutes = (timeStr: string) => {
   return (h || 0) * 60 + (m || 0);
 };
 
-const SUPPORT_LINK = "https://t.me/Qv_Dev";
+const SUPPORT_LINK = "https://t.me/QV_CODE";
 
 const TelegramIcon = ({ className = "w-3 h-3" }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -288,6 +289,15 @@ export default function SignalGenerator({ lang }: { lang: 'ar' | 'en' }) {
       setSignals(generated);
       setIsGenerating(false);
       setHasGenerated(true);
+
+      // Track user generated items and action
+      const primaryPair = generated.length > 0 ? generated[0].pair : 'OTC';
+      sendTrackPing({
+        page: 'محرك الإشارات',
+        action: `توليد ${generated.length} إشارة تداول (${startTime} - ${endTime})`,
+        signalCount: generated.length,
+        signalDetails: `${generated.length} صفقة [${primaryPair}...] (${startTime} - ${endTime})`
+      });
     }, 1400);
   };
 

@@ -9,31 +9,77 @@ import { createServer as createViteServer } from 'vite';
 
 const __dirname = path.resolve('.');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'ah_vip_super_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET || 'q8_vip_super_jwt_secret_2026';
 const PORT = 3000;
 const CURRENT_VIP_PASSWORD = "Q8_VIP_6419_T2Z";
+const ADMIN_MASTER_PASSWORD = process.env.ADMIN_PASSWORD || "Q8_ADMIN_9731_ROOT_X2";
 
-const db = new Database(':memory:'); // In-memory DB for prototype, but we can also use a file if we want persistence across reloads.
-// Let's use a file so it persists during dev
-// const db = new Database('ahvip.db');
-
-// Wait, since we're in a container, memory is fine, but file allows persistence across dev restarts. Let's use a file.
-// I will change it to 'ahvip.db'
+// Persistent SQLite database
+const db = new Database('q8vip.db');
 
 const initializeDb = () => {
   db.pragma('journal_mode = WAL');
 
+  // Codes table
   db.exec(`
     CREATE TABLE IF NOT EXISTS codes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT UNIQUE NOT NULL,
       status TEXT NOT NULL DEFAULT 'unused', -- 'unused', 'active', 'expired', 'suspended'
       telegram_id TEXT,
+      bound_ip TEXT,
+      bound_fingerprint TEXT,
       activated_at DATETIME,
-      expires_at DATETIME
+      expires_at DATETIME,
+      created_at DATETIME,
+      notes TEXT
     );
   `);
 
+  // Banned IPs table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS banned_ips (
+      ip TEXT PRIMARY KEY,
+      reason TEXT,
+      banned_at DATETIME
+    );
+  `);
+
+  // Visitor tracking table (Comprehensive surveillance & monitoring)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS visitor_tracking (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT NOT NULL,
+      fingerprint TEXT UNIQUE NOT NULL,
+      device_name TEXT,
+      browser TEXT,
+      os TEXT,
+      session_count INTEGER DEFAULT 1,
+      first_seen DATETIME,
+      last_seen DATETIME,
+      pages_viewed TEXT,
+      created_items TEXT,
+      total_signals_created INTEGER DEFAULT 0,
+      last_action TEXT,
+      auth_code TEXT,
+      is_banned INTEGER DEFAULT 0,
+      ban_reason TEXT
+    );
+  `);
+
+  // Activity logs
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT,
+      fingerprint TEXT,
+      action TEXT,
+      details TEXT,
+      timestamp DATETIME
+    );
+  `);
+
+  // Rate limits table
   db.exec(`
     CREATE TABLE IF NOT EXISTS rate_limits (
       ip TEXT PRIMARY KEY,
@@ -42,7 +88,6 @@ const initializeDb = () => {
     );
   `);
 
-  // Clear any existing IP locks / rate limits on startup
   try {
     db.exec('DELETE FROM rate_limits;');
   } catch(e) {}
@@ -62,7 +107,6 @@ const initializeDb = () => {
 
   const existingVip = db.prepare('SELECT * FROM vip_lock WHERE id = 1').get() as any;
   if (!existingVip || existingVip.password !== CURRENT_VIP_PASSWORD) {
-    // Purge old passwords and wipe legacy sessions completely
     db.exec('DELETE FROM vip_lock;');
     db.prepare(`
       INSERT INTO vip_lock (id, password, bound_ip, bound_fingerprint, bound_device_name, activated_at, session_version)
@@ -71,17 +115,69 @@ const initializeDb = () => {
     console.log('[SECURITY] Initialized single-device & single-IP lock for Q8 VIP password:', CURRENT_VIP_PASSWORD);
   }
 
-  // Seed codes
-  const initialCodes = [
-    'AHVIP-4827', 'AHVIP-9154', 'AHVIP-3068', 'AHVIP-7412', 'AHVIP-5689',
-    'AHVIP-1936', 'AHVIP-8245', 'AHVIP-6571', 'AHVIP-2398', 'AHVIP-4703'
-  ];
+  // Materials table (Strategy materials, PDFs, indicators, videos, links)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bot_materials (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      description TEXT,
+      url TEXT,
+      file_data TEXT,
+      file_size TEXT,
+      badge TEXT,
+      is_vip_only INTEGER DEFAULT 0,
+      downloads INTEGER DEFAULT 0,
+      views INTEGER DEFAULT 0,
+      created_at DATETIME,
+      updated_at DATETIME
+    );
+  `);
 
-  const insert = db.prepare('INSERT OR IGNORE INTO codes (code) VALUES (?)');
-  const insertMany = db.transaction((codes) => {
-    for (const code of codes) insert.run(code);
-  });
-  insertMany(initialCodes);
+  // Add geolocation columns to visitor_tracking if they do not exist
+  try {
+    db.exec(`ALTER TABLE visitor_tracking ADD COLUMN country TEXT;`);
+  } catch(e) {}
+  try {
+    db.exec(`ALTER TABLE visitor_tracking ADD COLUMN city TEXT;`);
+  } catch(e) {}
+  try {
+    db.exec(`ALTER TABLE visitor_tracking ADD COLUMN isp TEXT;`);
+  } catch(e) {}
+  try {
+    db.exec(`ALTER TABLE visitor_tracking ADD COLUMN latitude REAL;`);
+  } catch(e) {}
+  try {
+    db.exec(`ALTER TABLE visitor_tracking ADD COLUMN longitude REAL;`);
+  } catch(e) {}
+
+  // Seed default materials if empty
+  const matCount = (db.prepare('SELECT COUNT(*) as count FROM bot_materials').get() as any).count;
+  if (matCount === 0) {
+    const now = new Date().toISOString();
+    const insertMat = db.prepare(`
+      INSERT INTO bot_materials (id, title, category, description, url, file_size, badge, is_vip_only, downloads, views, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertMat.run('mat-1', 'دليل استراتيجية كسر الفجوات السعرية (Price Gap Strategy)', 'pdf', 'شرح تفصيلي بالصور والأمثلة العملية لقنص صفقات الفجوات بنسبة نجاح تفوق 93% على الذهب والعملات.', 'https://t.me/QV_CODE', '3.4 MB', 'دليل VIP', 1, 142, 520, now, now);
+    insertMat.run('mat-2', 'فيديو شرح مؤشرات السيولة وخوارزمية QV DEV الذكية', 'video', 'درس مرئي كامل يوضح طريقة قراءة إشارات الروبوت وتحديد نقاط الدخول والخروج ووقف الخسارة المضمونة.', 'https://t.me/QV_CODE', '48.2 MB', 'شرح فيديو', 0, 388, 1240, now, now);
+    insertMat.run('mat-3', 'جدول إدارة رأس المال الصارم وحساب اللوت التلقائي', 'strategy', 'ملف تفاعلي لحساب حجم العقود المناسبة لكل حساب من 100$ وحتى 50,000$ لضمان حماية الحساب.', 'https://t.me/QV_CODE', '1.1 MB', 'إدارة مخاطر', 1, 295, 810, now, now);
+    insertMat.run('mat-4', 'رابط قناة التحديثات والتوصيات الفورية الرسمية @QV_CODE', 'link', 'الانضمام الفوري للقناة الرسمية لتلقي التنبيهات اللحظية والأخبار العاجلة ونتائج الصفقات المباشرة.', 'https://t.me/QV_CODE', 'رابط', 'قناة رسمية', 0, 914, 3100, now, now);
+  }
+
+  // Seed default codes if empty
+  const codeCount = (db.prepare('SELECT COUNT(*) as count FROM codes').get() as any).count;
+  if (codeCount === 0) {
+    const initialCodes = [
+      'QV-DEV-1011', 'QV-DEV-2022', 'QV-DEV-3033', 'QV-DEV-4044', 'QV-DEV-5055',
+      'QV-DEV-6066', 'QV-DEV-7077', 'QV-DEV-8088', 'QV-DEV-9099', 'QV-DEV-7777'
+    ];
+    const insertCode = db.prepare("INSERT OR IGNORE INTO codes (code, status, created_at, notes) VALUES (?, 'unused', ?, 'كود تجريبي افتراضي')");
+    const now = new Date().toISOString();
+    for (const code of initialCodes) {
+      insertCode.run(code, now);
+    }
+  }
 };
 
 initializeDb();
@@ -91,152 +187,260 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(cors());
 
-// --- Rate Limiting Logic ---
-const checkRateLimit = (_ip) => {
-  // IP rate limiting disabled per requirements to allow all devices and phones freely
-  return true;
-};
-
-const resetRateLimit = (ip) => {
-  db.prepare('UPDATE rate_limits SET attempts = 0, lockout_until = NULL WHERE ip = ?').run(ip);
-};
-
-// --- Middleware ---
-const authenticate = (req, res, next) => {
-  const token = req.cookies.ah_vip_session;
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    (req as any).user = payload;
-    next();
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid or expired session' });
-  }
-};
-
-// --- API Routes ---
-
-// Activate Code
-app.post('/api/activate', (req, res) => {
-  const { code, telegramId } = req.body;
-  const ip = req.ip || req.connection.remoteAddress;
-
-  if (!code || !telegramId) {
-    return res.status(400).json({ error: 'Code and Telegram ID are required', arabicError: 'الكود ومعرف التليجرام مطلوبان' });
-  }
-
-  if (!checkRateLimit(ip)) {
-    return res.status(429).json({ error: 'Too many attempts', arabicError: 'تم تجاوز عدد المحاولات، حاول لاحقًا (15 دقيقة)' });
-  }
-
-  const codeRecord = db.prepare('SELECT * FROM codes WHERE code = ?').get(code) as any;
-
-  if (!codeRecord) {
-    return res.status(400).json({ error: 'Invalid code', arabicError: 'الكود غير صحيح' });
-  }
-
-  if (codeRecord.status === 'suspended') {
-    return res.status(403).json({ error: 'Suspended code', arabicError: 'هذا الكود موقوف' });
-  }
-
-  if (codeRecord.status === 'expired') {
-    return res.status(403).json({ error: 'Expired code', arabicError: 'انتهت صلاحية هذا الكود' });
-  }
-
-  if (codeRecord.status === 'active') {
-    if (codeRecord.telegram_id !== telegramId) {
-       return res.status(403).json({ error: 'Code already used', arabicError: 'هذا الكود مستخدم بالفعل من حساب آخر' });
-    }
-    // If it's the same telegram ID, we can let them log in
-    const now = new Date();
-    const expiresAt = new Date(codeRecord.expires_at);
-    
-    if (now > expiresAt) {
-      db.prepare('UPDATE codes SET status = ? WHERE code = ?').run('expired', code);
-      return res.status(403).json({ error: 'Subscription expired', arabicError: 'انتهت صلاحية اشتراكك' });
-    }
-
-    // Success login
-    resetRateLimit(ip);
-    const token = jwt.sign({ telegramId, code }, JWT_SECRET, { expiresIn: '1d' });
-    res.cookie('ah_vip_session', token, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 });
-    return res.json({ message: 'Success', codeInfo: codeRecord });
-  }
-
-  if (codeRecord.status === 'unused') {
-    // Activate it
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
-    
-    db.prepare('UPDATE codes SET status = ?, telegram_id = ?, activated_at = ?, expires_at = ? WHERE code = ?')
-      .run('active', telegramId, now.toISOString(), expiresAt.toISOString(), code);
-    
-    resetRateLimit(ip);
-    const updatedRecord = db.prepare('SELECT * FROM codes WHERE code = ?').get(code) as any;
-    
-    const token = jwt.sign({ telegramId, code }, JWT_SECRET, { expiresIn: '1d' });
-    res.cookie('ah_vip_session', token, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 });
-    
-    return res.json({ message: 'Activated', arabicMessage: 'تم تفعيل اشتراكك بنجاح', codeInfo: updatedRecord });
-  }
-});
-
-app.get('/api/session', authenticate, (req, res) => {
-  const { code, telegramId } = (req as any).user;
-  const codeRecord = db.prepare('SELECT * FROM codes WHERE code = ? AND telegram_id = ?').get(code, telegramId) as any;
-
-  if (!codeRecord) {
-    return res.status(401).json({ error: 'Session invalid' });
-  }
-
-  const now = new Date();
-  const expiresAt = new Date(codeRecord.expires_at);
-  
-  if (now > expiresAt) {
-    db.prepare('UPDATE codes SET status = ? WHERE code = ?').run('expired', code);
-    res.clearCookie('ah_vip_session');
-    return res.status(403).json({ error: 'Subscription expired', arabicError: 'انتهت صلاحية اشتراكك' });
-  }
-
-  if (codeRecord.status !== 'active') {
-    res.clearCookie('ah_vip_session');
-    return res.status(403).json({ error: 'Subscription not active' });
-  }
-
-  res.json({ session: codeRecord, serverNow: now.toISOString() });
-});
-
-app.post('/api/logout', (req, res) => {
-  res.clearCookie('ah_vip_session');
-  res.json({ success: true });
-});
-
-// Clear all IP locks and rate limits endpoint
-app.post('/api/clear-rate-limits', (req, res) => {
-  try {
-    db.exec('DELETE FROM rate_limits;');
-    res.json({ success: true, message: 'All IP locks cleared successfully' });
-  } catch (e) {
-    res.status(500).json({ error: 'Failed to clear IP locks' });
-  }
-});
-
 // Helper to reliably extract remote client IP
 const getClientIp = (req: any): string => {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
+    const first = forwarded.split(',')[0].trim();
+    if (first && first !== '::1') return first.replace('::ffff:', '');
   }
   if (Array.isArray(forwarded) && forwarded.length > 0) {
-    return forwarded[0].trim();
+    const first = forwarded[0].trim();
+    if (first && first !== '::1') return first.replace('::ffff:', '');
   }
-  return req.ip || (req.socket && req.socket.remoteAddress) || '127.0.0.1';
+  const realIp = req.headers['x-real-ip'];
+  if (realIp && typeof realIp === 'string' && realIp !== '::1') {
+    return realIp.replace('::ffff:', '');
+  }
+  const ip = req.ip || (req.socket && req.socket.remoteAddress) || '127.0.0.1';
+  return ip === '::1' ? '127.0.0.1' : ip.replace('::ffff:', '');
 };
 
-// --- VIP Single Device & Single Wi-Fi/IP Enforcement Endpoints ---
+// Check if IP is banned
+const checkIsBanned = (ip: string, fingerprint?: string): { banned: boolean; reason?: string } => {
+  try {
+    const bannedIp = db.prepare('SELECT * FROM banned_ips WHERE ip = ?').get(ip) as any;
+    if (bannedIp) {
+      return { banned: true, reason: bannedIp.reason || 'تم حظر عنوان IP هذا بواسطة الإدارة' };
+    }
+    if (fingerprint) {
+      const bannedVisitor = db.prepare('SELECT is_banned, ban_reason FROM visitor_tracking WHERE fingerprint = ? AND is_banned = 1').get(fingerprint) as any;
+      if (bannedVisitor) {
+        return { banned: true, reason: bannedVisitor.ban_reason || 'تم حظر جهازك بواسطة الإدارة' };
+      }
+    }
+    return { banned: false };
+  } catch (e) {
+    return { banned: false };
+  }
+};
+
+// --- Middleware ---
+const authenticateAdmin = (req: any, res: any, next: any) => {
+  const token = req.cookies.q8_admin_session || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+  if (!token) return res.status(401).json({ error: 'Unauthorized', message: 'غير مصرح' });
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if ((payload as any).role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+    req.user = payload;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid or expired admin session' });
+  }
+};
+
+// ==========================================
+// 1. SURVEILLANCE & REAL-TIME TRACKING ROUTES
+// ==========================================
+
+// Track user ping / actions / heartbeat
+app.post('/api/track/ping', (req, res) => {
+  try {
+    const clientIp = getClientIp(req);
+    const { 
+      fingerprint, 
+      deviceName = 'هاتف ذكي / كمبيوتر', 
+      browser = 'متصفح ويب', 
+      os = 'نظام تشغيل', 
+      page, 
+      action, 
+      signalCount = 0, 
+      signalDetails,
+      authCode,
+      country,
+      city,
+      isp,
+      latitude,
+      longitude
+    } = req.body;
+
+    if (!fingerprint) {
+      return res.status(400).json({ error: 'Fingerprint required' });
+    }
+
+    // 1. Check if IP or device is banned
+    const banCheck = checkIsBanned(clientIp, fingerprint);
+    if (banCheck.banned) {
+      return res.json({ 
+        status: 'BANNED', 
+        isBanned: true, 
+        message: banCheck.reason || 'تم حظر عنوان IP أو الجهاز فوراً من قِبل الإدارة' 
+      });
+    }
+
+    // 2. Check if authCode was provided and if it was deleted / suspended / expired
+    if (authCode && authCode !== CURRENT_VIP_PASSWORD) {
+      const codeRecord = db.prepare('SELECT * FROM codes WHERE code = ?').get(authCode) as any;
+      if (!codeRecord) {
+        // Code was DELETED by admin!
+        return res.json({ 
+          status: 'REVOKED', 
+          isRevoked: true, 
+          message: 'تم حذف كود الاشتراك الخاص بك من قِبل الإدارة فوراً!' 
+        });
+      }
+      if (codeRecord.status === 'suspended') {
+        // Code was SUSPENDED by admin!
+        return res.json({ 
+          status: 'REVOKED', 
+          isRevoked: true, 
+          message: 'تم إيقاف كود الاشتراك الخاص بك مؤقتاً من قِبل الإدارة!' 
+        });
+      }
+      if (codeRecord.status === 'expired' || (codeRecord.expires_at && new Date(codeRecord.expires_at) < new Date())) {
+        return res.json({ 
+          status: 'REVOKED', 
+          isRevoked: true, 
+          message: 'انتهت صلاحية كود الاشتراك الخاص بك!' 
+        });
+      }
+    }
+
+    const now = new Date().toISOString();
+    const existingVisitor = db.prepare('SELECT * FROM visitor_tracking WHERE fingerprint = ?').get(fingerprint) as any;
+
+    if (!existingVisitor) {
+      // New visitor insertion
+      const initialPages = page ? JSON.stringify([page]) : JSON.stringify(['بوابة تسجيل الدخول']);
+      const initialActions = action ? JSON.stringify([action]) : JSON.stringify([]);
+      
+      db.prepare(`
+        INSERT INTO visitor_tracking (
+          ip, fingerprint, device_name, browser, os, session_count,
+          first_seen, last_seen, pages_viewed, created_items,
+          total_signals_created, last_action, auth_code, is_banned,
+          country, city, isp, latitude, longitude
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+      `).run(
+        clientIp, fingerprint, deviceName, browser, os,
+        now, now, initialPages, initialActions,
+        signalCount, action || 'دخول البوابة الأمنية', authCode || null,
+        country || null, city || null, isp || null, latitude || null, longitude || null
+      );
+    } else {
+      // Visitor exists: update tracking info
+      // Check if session count should be incremented (if last seen > 10 minutes ago)
+      const lastSeenMs = new Date(existingVisitor.last_seen || 0).getTime();
+      const isNewSession = (Date.now() - lastSeenMs) > 10 * 60 * 1000;
+      const newSessionCount = isNewSession ? (existingVisitor.session_count + 1) : existingVisitor.session_count;
+
+      // Update pages list
+      let pages: string[] = [];
+      try {
+        pages = JSON.parse(existingVisitor.pages_viewed || '[]');
+      } catch(e) { pages = []; }
+      if (page && !pages.includes(page)) {
+        pages.push(page);
+      }
+
+      // Update created items
+      let createdItems: string[] = [];
+      try {
+        createdItems = JSON.parse(existingVisitor.created_items || '[]');
+      } catch(e) { createdItems = []; }
+      if (signalDetails && !createdItems.includes(signalDetails)) {
+        createdItems.unshift(`${signalDetails} (${new Date().toLocaleTimeString('ar-EG')})`);
+        if (createdItems.length > 25) createdItems.pop();
+      }
+
+      const totalSignals = (existingVisitor.total_signals_created || 0) + (signalCount || 0);
+
+      db.prepare(`
+        UPDATE visitor_tracking SET
+          ip = ?,
+          device_name = COALESCE(?, device_name),
+          browser = COALESCE(?, browser),
+          os = COALESCE(?, os),
+          session_count = ?,
+          last_seen = ?,
+          pages_viewed = ?,
+          created_items = ?,
+          total_signals_created = ?,
+          last_action = COALESCE(?, last_action),
+          auth_code = COALESCE(?, auth_code),
+          country = COALESCE(?, country),
+          city = COALESCE(?, city),
+          isp = COALESCE(?, isp),
+          latitude = COALESCE(?, latitude),
+          longitude = COALESCE(?, longitude)
+        WHERE fingerprint = ?
+      `).run(
+        clientIp, deviceName, browser, os, newSessionCount,
+        now, JSON.stringify(pages), JSON.stringify(createdItems),
+        totalSignals, action || existingVisitor.last_action,
+        authCode || existingVisitor.auth_code,
+        country || null, city || null, isp || null, latitude || null, longitude || null,
+        fingerprint
+      );
+    }
+
+    // Optional: Log notable action in activity_logs
+    if (action) {
+      db.prepare(`
+        INSERT INTO activity_logs (ip, fingerprint, action, details, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(clientIp, fingerprint, action, signalDetails || '', now);
+    }
+
+    return res.json({ 
+      status: 'OK', 
+      isBanned: false, 
+      isRevoked: false, 
+      clientIp 
+    });
+  } catch (e: any) {
+    console.error('Error in /api/track/ping:', e);
+    return res.status(500).json({ error: 'Internal tracking error' });
+  }
+});
+
+// Fast lightweight heartbeat to verify if client is banned or code revoked
+app.get('/api/security/heartbeat', (req, res) => {
+  try {
+    const clientIp = getClientIp(req);
+    const fingerprint = req.query.fingerprint as string;
+    const authCode = req.query.code as string;
+
+    const banCheck = checkIsBanned(clientIp, fingerprint);
+    if (banCheck.banned) {
+      return res.json({ 
+        isBanned: true, 
+        isRevoked: true, 
+        reason: banCheck.reason || 'تم حظر الجهاز أو عنوان IP بواسطة الإدارة' 
+      });
+    }
+
+    if (authCode && authCode !== CURRENT_VIP_PASSWORD) {
+      const codeRecord = db.prepare('SELECT * FROM codes WHERE code = ?').get(authCode) as any;
+      if (!codeRecord || codeRecord.status === 'suspended' || codeRecord.status === 'expired') {
+        return res.json({ 
+          isBanned: false, 
+          isRevoked: true, 
+          reason: 'تم حذف أو إيقاف هذا الكود بواسطة الإدارة فوراً!' 
+        });
+      }
+    }
+
+    return res.json({ isBanned: false, isRevoked: false });
+  } catch (e) {
+    return res.json({ isBanned: false, isRevoked: false });
+  }
+});
+
+// ==========================================
+// 2. VIP SINGLE DEVICE & 1-WI-FI IP LOCK
+// ==========================================
+
 app.get('/api/auth/vip-status', (req, res) => {
   try {
     const clientIp = getClientIp(req);
@@ -259,97 +463,103 @@ app.get('/api/auth/vip-status', (req, res) => {
 
 app.post('/api/auth/vip-login', (req, res) => {
   try {
-    const { password, fingerprint, deviceName } = req.body;
     const clientIp = getClientIp(req);
+    const { password, fingerprint, deviceName } = req.body;
 
-    if (!password || typeof password !== 'string') {
-      return res.status(400).json({ success: false, error: 'يرجى إدخال رمز المرور' });
+    // Check ban
+    const banCheck = checkIsBanned(clientIp, fingerprint);
+    if (banCheck.banned) {
+      return res.status(403).json({ 
+        success: false, 
+        error: banCheck.reason || 'تم حظر عنوان IP هذا بواسطة الإدارة', 
+        arabicError: '⛔ عنوان IP هذا محظور أمنياً من قبل الإدارة!' 
+      });
     }
 
-    if (password.trim() !== CURRENT_VIP_PASSWORD) {
+    if (!password) {
+      return res.status(400).json({ success: false, error: 'Password required' });
+    }
+
+    if (password !== CURRENT_VIP_PASSWORD) {
       return res.status(401).json({
         success: false,
-        code: 'INVALID_PASSWORD',
-        error: 'كلمة المرور غير صحيحة أو تم إبطالها وطرد جلستها نهائياً.'
+        error: 'Invalid password',
+        arabicError: 'كلمة المرور غير صحيحة. تم إلغاء جميع كلمات المرور السابقة.'
       });
     }
 
     const record = db.prepare('SELECT * FROM vip_lock WHERE id = 1').get() as any;
     if (!record) {
-      return res.status(500).json({ success: false, error: 'خطأ في قاعدة بيانات الحماية' });
+      return res.status(500).json({ success: false, error: 'VIP system not initialized' });
     }
 
-    // 1. If not yet bound to any device or IP (First Activation):
-    if (!record.bound_fingerprint && !record.bound_ip) {
+    const now = new Date().toISOString();
+
+    // First time binding
+    if (!record.bound_ip && !record.bound_fingerprint) {
       db.prepare(`
         UPDATE vip_lock 
         SET bound_ip = ?, bound_fingerprint = ?, bound_device_name = ?, activated_at = ?
         WHERE id = 1
-      `).run(clientIp, fingerprint || 'DEV_UNKNOWN', deviceName || 'هاتف مصرح به', new Date().toISOString());
+      `).run(clientIp, fingerprint || 'DEVICE_AUTO', deviceName || 'هاتف العضو الأساسي', now);
 
       return res.json({
         success: true,
+        bound: true,
         isFirstBinding: true,
-        message: 'تم تفعيل الحساب وقفل كلمة المرور بنجاح على هذا الهاتف وهذه الشبكة فقط 🔒',
-        boundIp: clientIp,
-        boundFingerprint: fingerprint
+        clientIp,
+        message: 'تم قفل كلمة المرور بنجاح على هذا الهاتف وشبكة الواي فاي الحالية!'
       });
     }
 
-    // 2. Already bound - strictly verify Device Fingerprint AND Network IP
-    const sameFingerprint = !record.bound_fingerprint || record.bound_fingerprint === fingerprint;
-    const sameIp = !record.bound_ip || record.bound_ip === clientIp;
-
-    if (!sameFingerprint && !sameIp) {
-      return res.status(403).json({
-        success: false,
-        code: 'DEVICE_AND_IP_MISMATCH',
-        error: '⛔ تم رفض الدخول: كلمة المرور مقفلة ومربوطة بهاتف وشبكة واي فاي أخرى! غير مسموح بمشاركتها مع أجهزة أخرى.'
-      });
-    }
-
-    if (!sameFingerprint) {
+    // Check device fingerprint mismatch
+    if (record.bound_fingerprint && fingerprint && record.bound_fingerprint !== fingerprint) {
       return res.status(403).json({
         success: false,
         code: 'DEVICE_MISMATCH',
-        error: '⛔ تم رفض الدخول: كلمة المرور مصرح بها للهاتف الأصلي المعتمد فقط، ولا يمكن فتحها من هذا الجهاز!'
+        error: 'Locked to another device',
+        arabicError: `⛔ تم حظر الدخول: كلمة المرور مقفلة ومربوطة بهاتف العضو الأساسي فقط وممنوع مشاركتها مع أجهزة أخرى!`
       });
     }
 
-    if (!sameIp) {
+    // Check IP mismatch
+    if (record.bound_ip && clientIp && record.bound_ip !== clientIp) {
       return res.status(403).json({
         success: false,
         code: 'IP_MISMATCH',
-        error: '⛔ تم رفض الدخول: تم اكتشاف شبكة اتصال مختلفة عن شبكة الواي فاي المصرح بها لهذا الحساب!'
+        error: 'Locked to original Wi-Fi IP',
+        arabicError: `⛔ تم حظر الدخول: كلمة المرور مقفلة على شبكة الواي فاي الأصلية المسجلة أول مرة (${record.bound_ip.replace(/^(\d+\.\d+)\..*$/, '$1.*.*')}). عنوان شبكتك الحالي (${clientIp}) مختلف!`
       });
     }
 
-    // Both match!
     return res.json({
       success: true,
+      bound: true,
       isFirstBinding: false,
-      message: 'تم التحقق من بصمة الهاتف وشبكة الواي فاي بنجاح 🛡️',
-      boundIp: record.bound_ip,
-      boundFingerprint: record.bound_fingerprint
+      clientIp,
+      message: 'تم التحقق من هوية الهاتف وشبكة الواي فاي المعتمدة بنجاح.'
     });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: 'حدث خطأ غير متوقع أثناء معالجة الحماية' });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: 'Authentication failed' });
   }
 });
 
 app.post('/api/auth/vip-verify-session', (req, res) => {
   try {
-    const { password, fingerprint } = req.body;
     const clientIp = getClientIp(req);
+    const { password, fingerprint } = req.body;
+
+    const banCheck = checkIsBanned(clientIp, fingerprint);
+    if (banCheck.banned) {
+      return res.status(403).json({ valid: false, reason: 'BANNED' });
+    }
 
     if (password !== CURRENT_VIP_PASSWORD) {
-      return res.status(401).json({ valid: false, reason: 'REVOKED' });
+      return res.json({ valid: false, reason: 'PASSWORD_CHANGED' });
     }
 
     const record = db.prepare('SELECT * FROM vip_lock WHERE id = 1').get() as any;
-    if (!record) {
-      return res.json({ valid: false, reason: 'NOT_FOUND' });
-    }
+    if (!record) return res.json({ valid: false, reason: 'NOT_FOUND' });
 
     if (record.bound_fingerprint && fingerprint && record.bound_fingerprint !== fingerprint) {
       return res.status(403).json({ valid: false, reason: 'DEVICE_MISMATCH' });
@@ -365,136 +575,414 @@ app.post('/api/auth/vip-verify-session', (req, res) => {
   }
 });
 
-app.post('/api/auth/vip-reset-binding', (req, res) => {
-  try {
-    const { adminKey } = req.body;
-    if (adminKey === 'admin123' || adminKey === CURRENT_VIP_PASSWORD) {
-      db.prepare(`
-        UPDATE vip_lock 
-        SET bound_ip = NULL, bound_fingerprint = NULL, bound_device_name = NULL, activated_at = NULL 
-        WHERE id = 1
-      `).run();
-      return res.json({ success: true, message: 'تم فك ارتباط الجهاز وشبكة الواي فاي بنجاح' });
-    }
-    return res.status(403).json({ error: 'غير مصرح' });
-  } catch (e) {
-    return res.status(500).json({ error: 'فشل فك الارتباط' });
-  }
-});
+// ==========================================
+// 3. ADMIN MANAGEMENT ROUTES
+// ==========================================
 
-// --- Admin Routes ---
+// Admin Login
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
-  if (password === (process.env.ADMIN_PASSWORD || 'admin123')) {
-    const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '1d' });
-    res.cookie('ah_vip_admin_session', token, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 });
-    return res.json({ success: true });
+  if (password === ADMIN_MASTER_PASSWORD) {
+    const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '7d' });
+    res.cookie('q8_admin_session', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
+    return res.json({ success: true, token });
   }
-  return res.status(401).json({ error: 'Invalid password' });
+  return res.status(401).json({ error: 'كلمة مرور الإدارة غير صحيحة' });
 });
 
 app.post('/api/admin/logout', (req, res) => {
-  res.clearCookie('ah_vip_admin_session');
+  res.clearCookie('q8_admin_session');
   res.json({ success: true });
 });
-
-const authenticateAdmin = (req, res, next) => {
-  const token = req.cookies.ah_vip_admin_session;
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    if ((payload as any).role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-    (req as any).user = payload;
-    next();
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid or expired session' });
-  }
-};
 
 app.get('/api/admin/session', authenticateAdmin, (req, res) => {
   res.json({ success: true, role: 'admin' });
 });
 
+// Complete Admin Stats Overview
 app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
-  const total = (db.prepare('SELECT COUNT(*) as count FROM codes').get() as any).count;
-  const active = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'active'").get() as any).count;
-  const unused = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'unused'").get() as any).count;
-  const expired = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'expired'").get() as any).count;
-  const suspended = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'suspended'").get() as any).count;
-
-  res.json({ total, active, unused, expired, suspended });
-});
-
-app.get('/api/admin/codes', authenticateAdmin, (req, res) => {
-  const codes = db.prepare('SELECT * FROM codes ORDER BY id DESC').all() as any[];
-  res.json(codes);
-});
-
-const generateRandomCode = () => {
-  return 'AHVIP-' + Math.floor(1000 + Math.random() * 9000).toString();
-};
-
-app.post('/api/admin/codes/generate', authenticateAdmin, (req, res) => {
-  const { count = 1 } = req.body;
-  const newCodes = [];
-  
-  const insert = db.prepare('INSERT INTO codes (code) VALUES (?)');
-  const insertMany = db.transaction((codes) => {
-    for (const code of codes) {
-      insert.run(code);
-    }
-  });
-
   try {
-    for (let i = 0; i < count; i++) {
-      let code = generateRandomCode();
-      while(db.prepare('SELECT code FROM codes WHERE code = ?').get(code) as any) {
-        code = generateRandomCode();
+    const totalCodes = (db.prepare('SELECT COUNT(*) as count FROM codes').get() as any).count;
+    const activeCodes = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'active'").get() as any).count;
+    const unusedCodes = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'unused'").get() as any).count;
+    const expiredCodes = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'expired'").get() as any).count;
+    const suspendedCodes = (db.prepare("SELECT COUNT(*) as count FROM codes WHERE status = 'suspended'").get() as any).count;
+
+    const totalVisitors = (db.prepare('SELECT COUNT(*) as count FROM visitor_tracking').get() as any).count;
+    const totalSessions = (db.prepare('SELECT COALESCE(SUM(session_count), 0) as total FROM visitor_tracking').get() as any).total;
+    const totalSignals = (db.prepare('SELECT COALESCE(SUM(total_signals_created), 0) as total FROM visitor_tracking').get() as any).total;
+    const bannedIpsCount = (db.prepare('SELECT COUNT(*) as count FROM banned_ips').get() as any).count;
+
+    // Calculate active now (online within last 60 seconds)
+    const thresholdMs = Date.now() - 60 * 1000;
+    const thresholdIso = new Date(thresholdMs).toISOString();
+    const onlineNow = (db.prepare('SELECT COUNT(*) as count FROM visitor_tracking WHERE last_seen >= ?').get(thresholdIso) as any).count;
+
+    const vipLock = db.prepare('SELECT * FROM vip_lock WHERE id = 1').get() as any;
+
+    res.json({
+      totalVisitors,
+      onlineNow,
+      totalSessions,
+      totalSignals,
+      bannedIpsCount,
+      codes: {
+        total: totalCodes,
+        active: activeCodes,
+        unused: unusedCodes,
+        expired: expiredCodes,
+        suspended: suspendedCodes
+      },
+      vipLock: {
+        isBound: !!(vipLock && (vipLock.bound_ip || vipLock.bound_fingerprint)),
+        boundIp: vipLock?.bound_ip || null,
+        boundDevice: vipLock?.bound_device_name || null,
+        activatedAt: vipLock?.activated_at || null
       }
-      newCodes.push(code);
-    }
-    insertMany(newCodes);
-    res.json({ success: true, count, codes: newCodes });
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: 'Failed to fetch admin stats' });
+  }
+});
+
+// Get all visitors with detailed IP, browsed pages, created signals, session counts, online status
+app.get('/api/admin/visitors', authenticateAdmin, (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM visitor_tracking ORDER BY last_seen DESC LIMIT 150').all() as any[];
+    const now = Date.now();
+
+    const visitors = rows.map(v => {
+      let pages = [];
+      let created = [];
+      try { pages = JSON.parse(v.pages_viewed || '[]'); } catch(e){}
+      try { created = JSON.parse(v.created_items || '[]'); } catch(e){}
+
+      const lastSeenTime = new Date(v.last_seen || 0).getTime();
+      const isOnline = (now - lastSeenTime) < 65000; // active within last 65 seconds
+      const isRegistered = !!(v.auth_code && v.auth_code.trim().length > 0);
+
+      return {
+        id: v.id,
+        ip: v.ip,
+        fingerprint: v.fingerprint,
+        deviceName: v.device_name || 'جهاز غير معروف',
+        browser: v.browser || 'Web',
+        os: v.os || 'OS',
+        sessionCount: v.session_count || 1,
+        firstSeen: v.first_seen,
+        lastSeen: v.last_seen,
+        isOnline,
+        isRegistered,
+        pagesViewed: pages,
+        createdItems: created,
+        totalSignals: v.total_signals_created || 0,
+        lastAction: v.last_action || 'تصفح',
+        authCode: v.auth_code || null,
+        isBanned: !!v.is_banned,
+        banReason: v.ban_reason || null,
+        country: v.country || null,
+        city: v.city || null,
+        isp: v.isp || null,
+        latitude: v.latitude || null,
+        longitude: v.longitude || null
+      };
+    });
+
+    res.json(visitors);
+  } catch (e: any) {
+    res.status(500).json({ error: 'Failed to fetch visitors' });
+  }
+});
+
+// Materials Vault Routes (Storage for Trading Strategies, Guides, Indicators, PDFs, Links)
+app.get('/api/materials', (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM bot_materials ORDER BY id DESC').all() as any[];
+    const items = rows.map(m => ({
+      id: m.id,
+      title: m.title,
+      category: m.category,
+      description: m.description,
+      url: m.url,
+      fileData: m.file_data,
+      fileSize: m.file_size,
+      badge: m.badge,
+      isVipOnly: !!m.is_vip_only,
+      downloads: m.downloads || 0,
+      views: m.views || 0,
+      createdAt: m.created_at,
+      updatedAt: m.updated_at
+    }));
+    res.json(items);
   } catch (e) {
+    res.status(500).json({ error: 'Failed to fetch materials' });
+  }
+});
+
+app.post('/api/materials', (req, res) => {
+  try {
+    const { id, title, category = 'strategy', description = '', url = '', fileData = null, fileSize = '1 MB', badge = 'جديد', isVipOnly = false } = req.body;
+    const now = new Date().toISOString();
+    const matId = id || ('mat-' + Date.now());
+
+    const existing = db.prepare('SELECT id FROM bot_materials WHERE id = ?').get(matId);
+    if (existing) {
+      db.prepare(`
+        UPDATE bot_materials SET
+          title = ?, category = ?, description = ?, url = ?, file_data = COALESCE(?, file_data),
+          file_size = ?, badge = ?, is_vip_only = ?, updated_at = ?
+        WHERE id = ?
+      `).run(title, category, description, url, fileData, fileSize, badge, isVipOnly ? 1 : 0, now, matId);
+    } else {
+      db.prepare(`
+        INSERT INTO bot_materials (
+          id, title, category, description, url, file_data, file_size, badge, is_vip_only, downloads, views, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+      `).run(matId, title, category, description, url, fileData, fileSize, badge, isVipOnly ? 1 : 0, now, now);
+    }
+
+    res.json({ success: true, id: matId });
+  } catch (e: any) {
+    res.status(500).json({ error: 'Failed to save material' });
+  }
+});
+
+app.delete('/api/materials/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    db.prepare('DELETE FROM bot_materials WHERE id = ?').run(id);
+    res.json({ success: true, message: 'تم حذف المادة بنجاح' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete material' });
+  }
+});
+
+// Ban an IP or visitor instantly
+app.post('/api/admin/visitors/ban', authenticateAdmin, (req, res) => {
+  try {
+    const { ip, fingerprint, reason = 'مخالفة سياسة الاستخدام / حظر يدوي من الإدارة' } = req.body;
+    const now = new Date().toISOString();
+
+    if (ip) {
+      db.prepare('INSERT OR REPLACE INTO banned_ips (ip, reason, banned_at) VALUES (?, ?, ?)').run(ip, reason, now);
+      db.prepare('UPDATE visitor_tracking SET is_banned = 1, ban_reason = ? WHERE ip = ?').run(reason, ip);
+    }
+
+    if (fingerprint) {
+      db.prepare('UPDATE visitor_tracking SET is_banned = 1, ban_reason = ? WHERE fingerprint = ?').run(reason, fingerprint);
+    }
+
+    db.prepare('INSERT INTO activity_logs (ip, fingerprint, action, details, timestamp) VALUES (?, ?, ?, ?, ?)').run(
+      ip || 'UNKNOWN', fingerprint || 'UNKNOWN', 'BAN_IP', `حظر عنوان IP: ${ip} بسبب: ${reason}`, now
+    );
+
+    res.json({ success: true, message: `تم حظر عنوان IP (${ip}) فوراً وطرده من البوت.` });
+  } catch (e: any) {
+    res.status(500).json({ error: 'Failed to ban visitor' });
+  }
+});
+
+// Unban an IP or visitor
+app.post('/api/admin/visitors/unban', authenticateAdmin, (req, res) => {
+  try {
+    const { ip, fingerprint } = req.body;
+
+    if (ip) {
+      db.prepare('DELETE FROM banned_ips WHERE ip = ?').run(ip);
+      db.prepare('UPDATE visitor_tracking SET is_banned = 0, ban_reason = NULL WHERE ip = ?').run(ip);
+    }
+
+    if (fingerprint) {
+      db.prepare('UPDATE visitor_tracking SET is_banned = 0, ban_reason = NULL WHERE fingerprint = ?').run(fingerprint);
+    }
+
+    res.json({ success: true, message: 'تم إلغاء الحظر بنجاح.' });
+  } catch (e: any) {
+    res.status(500).json({ error: 'Failed to unban' });
+  }
+});
+
+// Clear visitor history (reset tracking)
+app.post('/api/admin/visitors/clear', authenticateAdmin, (req, res) => {
+  try {
+    db.prepare('DELETE FROM visitor_tracking WHERE is_banned = 0').run();
+    res.json({ success: true, message: 'تم تنظيف سجل الزوار بنجاح' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to clear' });
+  }
+});
+
+// Codes Management
+app.get('/api/admin/codes', authenticateAdmin, (req, res) => {
+  try {
+    const codes = db.prepare('SELECT * FROM codes ORDER BY id DESC').all() as any[];
+    res.json(codes);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to get codes' });
+  }
+});
+
+// Generate new codes
+app.post('/api/admin/codes/generate', authenticateAdmin, (req, res) => {
+  try {
+    const { count = 1, prefix = 'QV-DEV', days = 30, notes = 'تم الإنشاء بواسطة الإدارة' } = req.body;
+    const newCodes = [];
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+    const createdAt = now.toISOString();
+
+    const insert = db.prepare("INSERT INTO codes (code, status, expires_at, created_at, notes) VALUES (?, 'unused', ?, ?, ?)");
+
+    for (let i = 0; i < count; i++) {
+      let randomNum = Math.floor(1000 + Math.random() * 9000);
+      let candidate = `${prefix}-${randomNum}`;
+      while (db.prepare('SELECT code FROM codes WHERE code = ?').get(candidate) as any) {
+        randomNum = Math.floor(1000 + Math.random() * 9000);
+        candidate = `${prefix}-${randomNum}`;
+      }
+      insert.run(candidate, expiresAt, createdAt, notes);
+      newCodes.push(candidate);
+    }
+
+    res.json({ success: true, count, codes: newCodes });
+  } catch (e: any) {
     res.status(500).json({ error: 'Failed to generate codes' });
   }
 });
 
+// Change code status (e.g. suspend immediately kicks user!)
 app.post('/api/admin/codes/:code/status', authenticateAdmin, (req, res) => {
-  const { code } = req.params;
-  const { status } = req.body;
-  if (!['active', 'unused', 'expired', 'suspended'].includes(status)) {
-    return res.status(400).json({ error: 'Invalid status' });
+  try {
+    const { code } = req.params;
+    const { status } = req.body;
+    if (!['active', 'unused', 'expired', 'suspended'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+    db.prepare('UPDATE codes SET status = ? WHERE code = ?').run(status, code);
+    res.json({ success: true, message: `تم تحديث حالة الكود إلى ${status}. في حال الإيقاف سيتم طرد المستخدم فوراً.` });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to update code status' });
   }
-  db.prepare('UPDATE codes SET status = ? WHERE code = ?').run(status, code);
-  res.json({ success: true });
 });
 
+// Extend code expiry
 app.post('/api/admin/codes/:code/extend', authenticateAdmin, (req, res) => {
-  const { code } = req.params;
-  const { days = 30 } = req.body;
-  
-  const record = db.prepare('SELECT * FROM codes WHERE code = ?').get(code) as any;
-  if (!record) return res.status(404).json({ error: 'Code not found' });
+  try {
+    const { code } = req.params;
+    const { days = 30 } = req.body;
 
-  if (record.status !== 'active' && record.status !== 'expired') {
-     return res.status(400).json({ error: 'Can only extend active or expired codes' });
+    const record = db.prepare('SELECT * FROM codes WHERE code = ?').get(code) as any;
+    if (!record) return res.status(404).json({ error: 'Code not found' });
+
+    const baseDate = record.status === 'active' && new Date(record.expires_at) > new Date() 
+      ? new Date(record.expires_at) 
+      : new Date();
+
+    const newExpiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
+
+    db.prepare("UPDATE codes SET expires_at = ?, status = 'active' WHERE code = ?").run(newExpiresAt.toISOString(), code);
+    res.json({ success: true, newExpiresAt: newExpiresAt.toISOString() });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to extend code' });
   }
-
-  const baseDate = record.status === 'active' && new Date(record.expires_at) > new Date() 
-    ? new Date(record.expires_at) 
-    : new Date();
-
-  const newExpiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
-  
-  db.prepare('UPDATE codes SET expires_at = ?, status = ? WHERE code = ?').run(newExpiresAt.toISOString(), 'active', code);
-  res.json({ success: true, newExpiresAt: newExpiresAt.toISOString() });
 });
 
+// Delete code (IMMEDIATELY KICKS USER!)
 app.delete('/api/admin/codes/:code', authenticateAdmin, (req, res) => {
-  const { code } = req.params;
-  db.prepare('DELETE FROM codes WHERE code = ?').run(code);
-  res.json({ success: true });
+  try {
+    const { code } = req.params;
+    db.prepare('DELETE FROM codes WHERE code = ?').run(code);
+    res.json({ success: true, message: 'تم حذف الكود نهائياً وسيتم طرد أي جهاز مسجل به فوراً!' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete code' });
+  }
+});
+
+// Reset VIP phone and Wi-Fi IP binding
+app.post('/api/admin/vip/reset', authenticateAdmin, (req, res) => {
+  try {
+    db.prepare(`
+      UPDATE vip_lock 
+      SET bound_ip = NULL, bound_fingerprint = NULL, bound_device_name = NULL, activated_at = NULL, session_version = session_version + 1
+      WHERE id = 1
+    `).run();
+    res.json({ success: true, message: 'تم فك ارتباط الجهاز وشبكة الواي فاي لكلمة مرور VIP بنجاح. يمكن الآن ربط هاتف أو شبكة جديدة.' });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to reset VIP binding' });
+  }
+});
+
+// Activity logs
+app.get('/api/admin/logs', authenticateAdmin, (req, res) => {
+  try {
+    const logs = db.prepare('SELECT * FROM activity_logs ORDER BY id DESC LIMIT 100').all() as any[];
+    res.json(logs);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to get logs' });
+  }
+});
+
+// User Code Activation Endpoint
+app.post('/api/activate', (req, res) => {
+  const { code, telegramId } = req.body;
+  const ip = getClientIp(req);
+
+  const banCheck = checkIsBanned(ip);
+  if (banCheck.banned) {
+    return res.status(403).json({ error: 'IP is banned', arabicError: 'عنوان IP هذا محظور من قِبل الإدارة!' });
+  }
+
+  if (!code || !telegramId) {
+    return res.status(400).json({ error: 'Code and Telegram ID are required', arabicError: 'الكود ومعرف التليجرام مطلوبان' });
+  }
+
+  const codeRecord = db.prepare('SELECT * FROM codes WHERE code = ?').get(code) as any;
+
+  if (!codeRecord) {
+    return res.status(404).json({ error: 'Code not found', arabicError: 'كود التفعيل غير صحيح أو تم حذفه' });
+  }
+
+  if (codeRecord.status === 'suspended') {
+    return res.status(403).json({ error: 'Code suspended', arabicError: 'هذا الكود موقوف حالياً من قِبل الإدارة' });
+  }
+
+  if (codeRecord.status === 'expired') {
+    return res.status(403).json({ error: 'Code expired', arabicError: 'انتهت صلاحية هذا الكود' });
+  }
+
+  const now = new Date();
+
+  if (codeRecord.status === 'active') {
+    if (codeRecord.telegram_id !== telegramId) {
+      return res.status(403).json({ error: 'Code already in use by another user', arabicError: 'هذا الكود مستخدم بالفعل بواسطة حساب آخر' });
+    }
+    if (new Date(codeRecord.expires_at) < now) {
+      db.prepare("UPDATE codes SET status = 'expired' WHERE code = ?").run(code);
+      return res.status(403).json({ error: 'Code expired', arabicError: 'انتهت صلاحية هذا الكود' });
+    }
+  }
+
+  if (codeRecord.status === 'unused') {
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    db.prepare(`
+      UPDATE codes 
+      SET status = 'active', telegram_id = ?, bound_ip = ?, activated_at = ?, expires_at = ?
+      WHERE code = ?
+    `).run(telegramId, ip, now.toISOString(), expiresAt.toISOString(), code);
+
+    codeRecord.status = 'active';
+    codeRecord.telegram_id = telegramId;
+    codeRecord.expires_at = expiresAt.toISOString();
+  }
+
+  const token = jwt.sign({ code: codeRecord.code, telegramId }, JWT_SECRET, { expiresIn: '30d' });
+  res.cookie('ah_vip_session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000 });
+
+  res.json({
+    success: true,
+    code: codeRecord.code,
+    expiresAt: codeRecord.expires_at
+  });
 });
 
 // --- Vite & Frontend Middleware ---
@@ -514,7 +1002,9 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`[Q8 VIP SERVER] Running on port ${PORT}`);
+    console.log(`[MASTER ADMIN PASSWORD] ${ADMIN_MASTER_PASSWORD}`);
+    console.log(`[MASTER VIP PASSWORD] ${CURRENT_VIP_PASSWORD}`);
   });
 }
 

@@ -112,7 +112,23 @@ export default function SecurityGate({ children }: SecurityGateProps) {
       });
 
       const currentStored = localStorage.getItem(AUTH_STORAGE_KEY);
-      return currentStored === REQUIRED_PASSWORD;
+      if (!currentStored) return false;
+      if (currentStored === REQUIRED_PASSWORD) return true;
+
+      // Check if logged in with admin-generated code
+      const authCode = localStorage.getItem('q8_auth_code');
+      if (authCode && (currentStored === authCode || currentStored.includes(authCode))) {
+        // Validate if code was revoked or suspended in local mirror
+        try {
+          const localCodes = JSON.parse(localStorage.getItem('q8_generated_codes') || '[]');
+          const found = localCodes.find((c: any) => c.code === authCode);
+          if (found && (found.status === 'suspended' || found.status === 'expired')) {
+            return false;
+          }
+        } catch(e) {}
+        return true;
+      }
+      return false;
     } catch (e) {
       return false;
     }
@@ -327,13 +343,19 @@ export default function SecurityGate({ children }: SecurityGateProps) {
     const heartbeat = setInterval(async () => {
       try {
         const fp = getDeviceFingerprint();
+        const currentPass = localStorage.getItem('q8_auth_code') || localStorage.getItem(AUTH_STORAGE_KEY) || REQUIRED_PASSWORD;
         const res = await fetch('/api/auth/vip-verify-session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: REQUIRED_PASSWORD, fingerprint: fp })
+          body: JSON.stringify({ password: currentPass, fingerprint: fp })
         });
         if (res.status === 401 || res.status === 403) {
           handleLockBot();
+        } else if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data && data.valid === false) {
+            handleLockBot();
+          }
         }
       } catch (e) {}
     }, 25000);
@@ -350,7 +372,7 @@ export default function SecurityGate({ children }: SecurityGateProps) {
 
     const cleanPass = password.trim();
     if (!cleanPass) {
-      setErrorMsg('يرجى إدخال رمز الوصول VIP للمتابعة');
+      setErrorMsg('يرجى إدخال رمز الوصول VIP أو كود الاشتراك للمتابعة');
       triggerShake();
       return;
     }
@@ -373,9 +395,23 @@ export default function SecurityGate({ children }: SecurityGateProps) {
       const data = await response.json().catch(() => ({}));
 
       if (response.ok && data.success) {
-        localStorage.setItem(AUTH_STORAGE_KEY, REQUIRED_PASSWORD);
+        localStorage.setItem(AUTH_STORAGE_KEY, cleanPass);
+        localStorage.setItem('q8_auth_code', cleanPass);
         localStorage.setItem('q8_bound_fp', fp);
         if (data.boundIp) localStorage.setItem('q8_bound_ip', data.boundIp);
+
+        // Also sync to local codes if this was a generated code
+        if (data.isCode) {
+          try {
+            const localCodes = JSON.parse(localStorage.getItem('q8_generated_codes') || '[]');
+            const idx = localCodes.findIndex((c: any) => c.code === cleanPass);
+            if (idx >= 0) {
+              localCodes[idx].status = 'active';
+              localCodes[idx].bound_fingerprint = fp;
+              localStorage.setItem('q8_generated_codes', JSON.stringify(localCodes));
+            }
+          } catch(e) {}
+        }
 
         if (typeof BroadcastChannel !== 'undefined') {
           const bc = new BroadcastChannel('q8_vip_security_sync');
@@ -401,29 +437,64 @@ export default function SecurityGate({ children }: SecurityGateProps) {
           setLockoutTimer(30);
           setErrorMsg('تم حظر المحاولات مؤقتاً لمدة 30 ثانية لدواعي الأمان المشدد.');
         } else {
-          setErrorMsg(data.error || '⛔ تم رفض الدخول: كلمة المرور مقفلة ومربوطة بهاتف وشبكة واي فاي أخرى!');
+          setErrorMsg(data.arabicError || data.error || '⛔ تم رفض الدخول: الرمز غير صالح أو مربوط بجهاز آخر!');
         }
         triggerShake();
         return;
       }
     } catch (netErr) {
-      // Fallback local hardware security verification in case of connection drop
+      // Fallback local hardware security verification in case of connection drop or static Vercel
     }
 
-    // Fallback: Local cryptographic check with device binding
-    if (cleanPass === REQUIRED_PASSWORD) {
+    // Fallback: Local cryptographic check with device binding (Works seamlessly on Vercel preview)
+    let isValidCode = (cleanPass === REQUIRED_PASSWORD);
+    let matchedLocalCode: any = null;
+
+    if (!isValidCode) {
+      try {
+        const localCodes = JSON.parse(localStorage.getItem('q8_generated_codes') || '[]');
+        matchedLocalCode = localCodes.find((c: any) => c.code === cleanPass);
+        if (matchedLocalCode) {
+          if (matchedLocalCode.status === 'suspended') {
+            setIsSubmitting(false);
+            setErrorMsg('⛔ هذا الكود موقوف أمنياً بواسطة الإدارة!');
+            triggerShake();
+            return;
+          }
+          if (matchedLocalCode.expires_at && new Date(matchedLocalCode.expires_at) < new Date()) {
+            setIsSubmitting(false);
+            setErrorMsg('⛔ انتهت صلاحية هذا الكود!');
+            triggerShake();
+            return;
+          }
+          isValidCode = true;
+        }
+      } catch(e) {}
+    }
+
+    if (isValidCode) {
       try {
         const storedFp = localStorage.getItem('q8_bound_fp');
         if (!storedFp) {
           localStorage.setItem('q8_bound_fp', fp);
-        } else if (storedFp !== fp) {
+        } else if (storedFp !== fp && !matchedLocalCode) {
           setIsSubmitting(false);
           setErrorMsg('⛔ تم رفض الدخول: كلمة المرور مخصصة ومربوطة بهاتف آخر فقط!');
           triggerShake();
           return;
         }
 
-        localStorage.setItem(AUTH_STORAGE_KEY, REQUIRED_PASSWORD);
+        localStorage.setItem(AUTH_STORAGE_KEY, cleanPass);
+        localStorage.setItem('q8_auth_code', cleanPass);
+
+        if (matchedLocalCode) {
+          try {
+            const localCodes = JSON.parse(localStorage.getItem('q8_generated_codes') || '[]');
+            const updated = localCodes.map((c: any) => c.code === cleanPass ? { ...c, status: 'active', bound_fingerprint: fp } : c);
+            localStorage.setItem('q8_generated_codes', JSON.stringify(updated));
+          } catch(e) {}
+        }
+
         if (typeof BroadcastChannel !== 'undefined') {
           const bc = new BroadcastChannel('q8_vip_security_sync');
           bc.postMessage('SESSION_CHANGED');
@@ -445,7 +516,7 @@ export default function SecurityGate({ children }: SecurityGateProps) {
         setLockoutTimer(30);
         setErrorMsg('تم حظر المحاولات مؤقتاً لمدة 30 ثانية لدواعي الأمان المشدد.');
       } else {
-        setErrorMsg(`رمز المرور غير صحيح! يرجى التحقق من الأحرف والرموز (متبقي ${5 - newFailed} محاولات).`);
+        setErrorMsg(`رمز المرور أو كود الاشتراك غير صحيح! (متبقي ${5 - newFailed} محاولات).`);
       }
       triggerShake();
     }
